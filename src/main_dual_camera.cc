@@ -17,9 +17,15 @@
 #include "rk_common.h"
 #include "postprocess.h"
 #include "deepsort.h"
+#ifdef USE_RTSP_MPP
+#include "rtsp_mpp_sender.h"
+#endif
 
 using namespace std;
 using namespace cv;
+
+// 无窗口模式（全局，供线程函数使用）
+bool g_display_mode = true;
 
 // 骨架连接关系
 static const int skeleton_kps[38] = {
@@ -184,7 +190,7 @@ void process_camera(int cam_id, rknn_app_context_t* app_ctx, DeepSort* tracker,
                 cam_id, 1000.0/elapsed, od_results.count, detections.size());
         putText(frame, info, Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 255, 0), 2);
         
-        imshow(window_name, frame);
+        if (g_display_mode) imshow(window_name, frame);
         
         if (frame_count % 30 == 0) {
             printf("Cam%d Frame %d | FPS: %.1f | Det: %d | Track: %zu\n",
@@ -200,15 +206,33 @@ int main(int argc, char** argv) {
     printf("\n=== YOLOv8 Pose + DeepSORT 双摄像头跟踪系统 ===\n\n");
     
     if (argc < 4) {
-        printf("用法: %s <rknn_model> <camera0> <camera1>\n", argv[0]);
-        printf("  例如: %s ../model/yolov8_pose.rknn 0 2\n", argv[0]);
-        printf("  例如: %s ../model/yolov8_pose.rknn /dev/video0 /dev/video2\n", argv[0]);
+        printf("用法: %s <rknn_model> <camera0> <camera1> [--rtsp0 <url>] [--rtsp1 <url>]\n", argv[0]);
+        printf("  例如（双摄像头）: %s ../model/yolov8_pose.rknn 0 2\n", argv[0]);
+        printf("  例如（双路推流）: %s ../model/yolov8_pose.rknn 0 2 --rtsp0 rtsp://192.168.1.100:8554/cam0 --rtsp1 rtsp://192.168.1.100:8554/cam1\n", argv[0]);
+        printf("  其他参数: --no-display  无窗口模式\n");
         return -1;
     }
     
     char* model_path = argv[1];
     string cam0_source = argv[2];
     string cam1_source = argv[3];
+    string rtsp_url0, rtsp_url1;
+
+    // 无窗口模式
+    g_display_mode = true;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-display") == 0) {
+            g_display_mode = false;
+        } else if (strcmp(argv[i], "--rtsp0") == 0 && i + 1 < argc) {
+            rtsp_url0 = argv[++i];
+        } else if (strcmp(argv[i], "--rtsp1") == 0 && i + 1 < argc) {
+            rtsp_url1 = argv[++i];
+        }
+    }
+    if (g_display_mode && getenv("DISPLAY") == nullptr) {
+        printf("[INFO] DISPLAY 未设置，自动切换到无窗口模式\n");
+        g_display_mode = false;
+    }
     
     // 初始化两个 RKNN 上下文（每个摄像头一个）
     rknn_app_context_t app_ctx0, app_ctx1;
@@ -320,14 +344,47 @@ int main(int argc, char** argv) {
     int w1 = cap1.get(CAP_PROP_FRAME_WIDTH);
     int h1 = cap1.get(CAP_PROP_FRAME_HEIGHT);
     printf("✅ Camera 1 打开成功: %s (%dx%d)\n", cam1_source.c_str(), w1, h1);
-    
+
+    // ========== 初始化 RTSP 推流 ==========
+#ifdef USE_RTSP_MPP
+    RtspMppSender* rtsp_sender0 = nullptr;
+    RtspMppSender* rtsp_sender1 = nullptr;
+    if (!rtsp_url0.empty()) {
+        rtsp_sender0 = new RtspMppSender();
+        if (!rtsp_sender0->init(rtsp_url0.c_str(), w0, h0, 25)) {
+            printf("❌ Camera 0 RTSP 初始化失败: %s\n", rtsp_url0.c_str());
+            delete rtsp_sender0; rtsp_sender0 = nullptr;
+        } else {
+            printf("✅ Camera 0 RTSP 推流: %s (%dx%d)\n", rtsp_url0.c_str(), w0, h0);
+        }
+    }
+    if (!rtsp_url1.empty()) {
+        rtsp_sender1 = new RtspMppSender();
+        if (!rtsp_sender1->init(rtsp_url1.c_str(), w1, h1, 25)) {
+            printf("❌ Camera 1 RTSP 初始化失败: %s\n", rtsp_url1.c_str());
+            delete rtsp_sender1; rtsp_sender1 = nullptr;
+        } else {
+            printf("✅ Camera 1 RTSP 推流: %s (%dx%d)\n", rtsp_url1.c_str(), w1, h1);
+        }
+    }
+    if (rtsp_sender0 || rtsp_sender1) printf("\n");
+#else
+    if (!rtsp_url0.empty() || !rtsp_url1.empty()) {
+        printf("⚠ RTSP 推流需要编译时加 -DFFMPEG_RKMPP_ROOT=<path>，当前未启用\n\n");
+    }
+    void* rtsp_sender0 = nullptr;
+    void* rtsp_sender1 = nullptr;
+#endif
+
     printf("\n开始处理... 按 'q' 退出\n\n");
     
     // 创建窗口
-    namedWindow("Camera 0", WINDOW_NORMAL);
-    namedWindow("Camera 1", WINDOW_NORMAL);
-    
-    printf("使用单线程轮流处理模式（避免 OpenCV 多线程显示问题）\n\n");
+    if (g_display_mode) {
+        namedWindow("Camera 0", WINDOW_NORMAL);
+        namedWindow("Camera 1", WINDOW_NORMAL);
+    }
+
+    printf("使用单线程轮流处理模式\n\n");
     
     // 单线程轮流处理两个摄像头
     Mat frame0, frame1, rgb0, rgb1, resized0, resized1;
@@ -394,12 +451,15 @@ int main(int argc, char** argv) {
             total_time0 += elapsed0;
             
             char info0[128];
-            sprintf(info0, "Cam0 FPS:%.1f | Det:%d | Track:%zu", 
+            sprintf(info0, "Cam0 FPS:%.1f | Det:%d | Track:%zu",
                     1000.0/elapsed0, od_results0.count, detections0.size());
             putText(frame0, info0, Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 255, 0), 2);
-            
-            imshow("Camera 0", frame0);
-            
+
+            if (g_display_mode) imshow("Camera 0", frame0);
+#ifdef USE_RTSP_MPP
+            if (rtsp_sender0) rtsp_sender0->push(frame0);
+#endif
+
             if (frame_count0 % 30 == 0) {
                 printf("Cam0 Frame %d | FPS: %.1f | Det: %d | Track: %zu\n",
                        frame_count0, 1000.0/elapsed0, od_results0.count, detections0.size());
@@ -464,12 +524,15 @@ int main(int argc, char** argv) {
             total_time1 += elapsed1;
             
             char info1[128];
-            sprintf(info1, "Cam1 FPS:%.1f | Det:%d | Track:%zu", 
+            sprintf(info1, "Cam1 FPS:%.1f | Det:%d | Track:%zu",
                     1000.0/elapsed1, od_results1.count, detections1.size());
             putText(frame1, info1, Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 255, 0), 2);
-            
-            imshow("Camera 1", frame1);
-            
+
+            if (g_display_mode) imshow("Camera 1", frame1);
+#ifdef USE_RTSP_MPP
+            if (rtsp_sender1) rtsp_sender1->push(frame1);
+#endif
+
             if (frame_count1 % 30 == 0) {
                 printf("Cam1 Frame %d | FPS: %.1f | Det: %d | Track: %zu\n",
                        frame_count1, 1000.0/elapsed1, od_results1.count, detections1.size());
@@ -477,9 +540,11 @@ int main(int argc, char** argv) {
         }
         
         // 按键检测
-        char key = waitKey(1);
-        if (key == 'q' || key == 27) {
-            break;
+        if (g_display_mode) {
+            char key = waitKey(1);
+            if (key == 'q' || key == 27) {
+                break;
+            }
         }
     }
     
@@ -490,7 +555,11 @@ int main(int argc, char** argv) {
     // 清理
     cap0.release();
     cap1.release();
-    destroyAllWindows();
+    if (g_display_mode) destroyAllWindows();
+#ifdef USE_RTSP_MPP
+    if (rtsp_sender0) { rtsp_sender0->destroy(); delete rtsp_sender0; rtsp_sender0 = nullptr; }
+    if (rtsp_sender1) { rtsp_sender1->destroy(); delete rtsp_sender1; rtsp_sender1 = nullptr; }
+#endif
     
     delete tracker0;
     delete tracker1;

@@ -66,9 +66,5 @@ bool FeatureTensor::getRectsFeature(const cv::Mat& img, DETECTIONS& det) {
     
     doInference(mats, det);
 
-    double timeAfterGetRectsFeature = what_time_is_it_now();
-    std::cout << "--------Time cost in getRectsFeature: " << timeAfterGetRectsFeature- timeBeforeGetRectsFeature << "\n";
-
-    // std::cout << "in deepsort inference: " << mats.size() << "\n";
     return true;
 }

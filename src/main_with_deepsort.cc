@@ -20,6 +20,10 @@
 #include "rga.h"
 #include "RgaUtils.h"
 
+#ifdef USE_RTSP_MPP
+#include "rtsp_mpp_sender.h"
+#endif
+
 using namespace std;
 using namespace cv;
 
@@ -134,16 +138,34 @@ int main(int argc, char** argv) {
     printf("\n=== YOLOv8 Pose + DeepSORT 跟踪系统 ===\n\n");
     
     if (argc < 3) {
-        printf("用法: %s <rknn_model> <video_source> [output_video]\n", argv[0]);
-        printf("  例如: %s model/yolov8_pose.rknn 0\n", argv[0]);
-        printf("  例如: %s model/yolov8_pose.rknn video.mp4 output.avi\n", argv[0]);
+        printf("用法: %s <rknn_model> <video_source> [--rtsp <rtsp_url>]\n", argv[0]);
+        printf("  例如（摄像头）: %s model/yolov8_pose.rknn 0\n", argv[0]);
+        printf("  例如（视频文件）: %s model/yolov8_pose.rknn video.mp4\n", argv[0]);
+        printf("  例如（本地录像）: %s model/yolov8_pose.rknn 0 --rtsp rtsp://192.168.1.100:8554/stream\n", argv[0]);
+        printf("  其他参数:\n");
+        printf("    --no-display   不弹窗，纯推理模式\n");
         return -1;
     }
     
     char* model_path = argv[1];
     string video_source = argv[2];
     string output_path = (argc >= 4) ? argv[3] : "";
-    
+    string rtsp_url;
+
+    // 无窗口模式：--no-display 或 DISPLAY为空时自动检测
+    bool display_mode = true;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-display") == 0) {
+            display_mode = false;
+        } else if (strcmp(argv[i], "--rtsp") == 0 && i + 1 < argc) {
+            rtsp_url = argv[++i];
+        }
+    }
+    if (display_mode && getenv("DISPLAY") == nullptr) {
+        printf("[INFO] DISPLAY 未设置，自动切换到无窗口模式\n");
+        display_mode = false;
+    }
+
     // ========== 1. 初始化 RKNN 模型 ==========
     printf("正在加载 YOLOv8 Pose 模型: %s\n", model_path);
     
@@ -239,11 +261,32 @@ int main(int argc, char** argv) {
             printf("✅ 输出视频: %s\n\n", output_path.c_str());
         }
     }
+
+    // ========== 4b. 初始化 RTSP 推流 ==========
+#ifdef USE_RTSP_MPP
+    RtspMppSender* rtsp_sender = nullptr;
+    if (!rtsp_url.empty()) {
+        rtsp_sender = new RtspMppSender();
+        if (!rtsp_sender->init(rtsp_url.c_str(), width, height, (int)fps)) {
+            printf("❌ RTSP 推流初始化失败: %s\n", rtsp_url.c_str());
+            delete rtsp_sender;
+            rtsp_sender = nullptr;
+        } else {
+            printf("✅ RTSP 推流已启动: %s (%dx%d @ %.1f FPS)\n\n", rtsp_url.c_str(), width, height, fps);
+        }
+    }
+#else
+    if (!rtsp_url.empty()) {
+        printf("⚠ RTSP 推流需要编译时加 -DFFMPEG_RKMPP_ROOT=<path>，当前未启用\n");
+    }
+    void* rtsp_sender = nullptr;  // dummy for compilation
+#endif
     
     // ========== 5. 主循环 ==========
     printf("开始处理... 按 'q' 退出\n\n");
-    
-    namedWindow("YOLOv8 Pose + DeepSORT", WINDOW_NORMAL);
+    if (display_mode) {
+        namedWindow("YOLOv8 Pose + DeepSORT", WINDOW_NORMAL);
+    }
     
     Mat frame, rgb_img, resized_img;
     int frame_count = 0;
@@ -335,10 +378,17 @@ int main(int argc, char** argv) {
         putText(frame, info_text, Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2);
         
         // 显示和保存
-        imshow("YOLOv8 Pose + DeepSORT", frame);
+        if (display_mode) {
+            imshow("YOLOv8 Pose + DeepSORT", frame);
+        }
         if (writer.isOpened()) {
             writer.write(frame);
         }
+#ifdef USE_RTSP_MPP
+        if (rtsp_sender) {
+            rtsp_sender->push(frame);
+        }
+#endif
         
         // 每 30 帧打印一次
         if (frame_count % 30 == 0) {
@@ -346,10 +396,12 @@ int main(int argc, char** argv) {
                    frame_count, 1000.0 / elapsed, od_results.count, detections.size());
         }
         
-        char key = waitKey(1);
-        if (key == 'q' || key == 27) {
-            printf("\n用户中断\n");
-            break;
+        if (display_mode) {
+            char key = waitKey(1);
+            if (key == 'q' || key == 27) {
+                printf("\n用户中断\n");
+                break;
+            }
         }
     }
     
@@ -360,7 +412,14 @@ int main(int argc, char** argv) {
     
     cap.release();
     if (writer.isOpened()) writer.release();
-    destroyAllWindows();
+    if (display_mode) destroyAllWindows();
+#ifdef USE_RTSP_MPP
+    if (rtsp_sender) {
+        rtsp_sender->destroy();
+        delete rtsp_sender;
+        rtsp_sender = nullptr;
+    }
+#endif
     
     delete tracker;
     rknn_destroy(app_ctx.rknn_ctx);

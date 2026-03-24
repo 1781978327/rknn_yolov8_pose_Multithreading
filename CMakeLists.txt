@@ -144,12 +144,14 @@ add_executable(rknn_yolov8_with_deepsort
   src/main_with_deepsort.cc
   src/postprocess.cc
   src/rk_common.cc
+  ${RTSP_MPP_SRCS}
 )
 
 target_link_libraries(rknn_yolov8_with_deepsort
   ${RKNN_RT_LIB}
   ${RGA_LIB}
   ${OpenCV_LIBS}
+  ${RTSP_MPP_LIBS}
   deepsort
 )
 
@@ -158,12 +160,14 @@ add_executable(rknn_yolov8_dual_camera
   src/main_dual_camera.cc
   src/postprocess.cc
   src/rk_common.cc
+  ${RTSP_MPP_SRCS}
 )
 
 target_link_libraries(rknn_yolov8_dual_camera
   ${RKNN_RT_LIB}
   ${RGA_LIB}
   ${OpenCV_LIBS}
+  ${RTSP_MPP_LIBS}
   deepsort
 )
 
@@ -173,6 +177,15 @@ add_executable(test_camera
 )
 
 target_link_libraries(test_camera
+  ${OpenCV_LIBS}
+)
+
+# test_video_decode (视频解码测试)
+add_executable(test_video_decode
+  src/test_video_decode.cc
+)
+
+target_link_libraries(test_video_decode
   ${OpenCV_LIBS}
 )
 
@@ -194,6 +207,17 @@ if(RTSP_MPP_BUILD_RPATH)
   )
   # 关键：关闭 new dtags，让 RPATH（而不是 RUNPATH）对间接依赖也生效
   target_link_options(rknn_yolov8_demo PRIVATE -Wl,--disable-new-dtags)
+
+  set_target_properties(rknn_yolov8_with_deepsort PROPERTIES
+    BUILD_RPATH "$ORIGIN/lib;${RTSP_MPP_BUILD_RPATH}"
+    INSTALL_RPATH "$ORIGIN/lib;${RTSP_MPP_BUILD_RPATH}"
+  )
+  target_link_options(rknn_yolov8_with_deepsort PRIVATE -Wl,--disable-new-dtags)
+  set_target_properties(rknn_yolov8_dual_camera PROPERTIES
+    BUILD_RPATH "$ORIGIN/lib;${RTSP_MPP_BUILD_RPATH}"
+    INSTALL_RPATH "$ORIGIN/lib;${RTSP_MPP_BUILD_RPATH}"
+  )
+  target_link_options(rknn_yolov8_dual_camera PRIVATE -Wl,--disable-new-dtags)
 
   # 把 FFmpeg 相关动态库复制到 build/lib，避免环境变量/系统库冲突导致运行时报错
   add_custom_command(TARGET rknn_yolov8_demo POST_BUILD

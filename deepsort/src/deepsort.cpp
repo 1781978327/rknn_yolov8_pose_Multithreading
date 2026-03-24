@@ -147,7 +147,6 @@ void DeepSort::sort(cv::Mat& frame, DETECTIONSV2& detectionsv2) {
         flag1 = featureExtractor1->getRectsFeature(frame, detections);
         double timeAfterReID = what_time_is_it_now();
 
-        cout << "--------Time cost in ReID: " << timeAfterReID - timeBeforeReID << "\n";
         flag2 = true;
     }
     else {
@@ -158,11 +157,8 @@ void DeepSort::sort(cv::Mat& frame, DETECTIONSV2& detectionsv2) {
         double timeBeforeAssign = what_time_is_it_now();
         detectionsPart1.assign(start, start + border);
         detectionsPart2.assign(start + border, end);
-        double timeAfterAssign = what_time_is_it_now();
-
-        cout << "--------Time cost in assign: " << timeAfterAssign - timeBeforeAssign << "\n";
-
-        // NOTE: convert pointer or set global variables
+        detectionsPart1.assign(start, start + border);
+        detectionsPart2.assign(start + border, end);
         // inference separately
         double timeBeforeReID = what_time_is_it_now();
         thread reID1Thread1 (&FeatureTensor::getRectsFeature, featureExtractor1, std::ref(frame), std::ref(detectionsPart1));
@@ -171,8 +167,6 @@ void DeepSort::sort(cv::Mat& frame, DETECTIONSV2& detectionsv2) {
         reID1Thread1.join(); reID1Thread2.join();
 
         double timeAfterReID = what_time_is_it_now();
-
-        cout << "--------Time cost in ReID: " << timeAfterReID - timeBeforeReID << "\n";
 
         // copy new feature to origin detections
 
@@ -184,7 +178,6 @@ void DeepSort::sort(cv::Mat& frame, DETECTIONSV2& detectionsv2) {
                 detections[idx].updateFeature(detectionsPart2[idx - border].feature);
         }
         double timeAfterUpdateFeatures = what_time_is_it_now();
-        cout << "--------Time cost in update features: " << timeAfterUpdateFeatures - timeBeforeUpdateFeatures << "\n";
 
     }
  
@@ -203,7 +196,6 @@ void DeepSort::sort(cv::Mat& frame, DETECTIONSV2& detectionsv2) {
             results.push_back(make_pair(CLSCONF(track.cls, track.conf) ,track.to_tlwh()));
         }
     }
-    else cout << "Re-ID1 Error? " << flag1 << " Re-ID2 Error? " << flag2 << "\n";
 }
 
 // 注释掉 track_process() 函数，因为它依赖于多线程队列架构
