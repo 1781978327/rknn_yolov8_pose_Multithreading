@@ -26,7 +26,6 @@ rknn_fp::rknn_fp(const char *model_path, int cpuid, rknn_core_mask core_mask,
 
 
 	// Load model
-
 	FILE *fp = fopen(model_path, "rb");
 	if(fp == NULL) {
 		printf("fopen %s fail!\n", model_path);

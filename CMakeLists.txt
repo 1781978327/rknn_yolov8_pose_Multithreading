@@ -139,6 +139,43 @@ target_link_libraries(test_deepsort
   deepsort
 )
 
+# main_with_deepsort (YOLOv8 Pose + DeepSORT 完整集成版)
+add_executable(rknn_yolov8_with_deepsort
+  src/main_with_deepsort.cc
+  src/postprocess.cc
+  src/rk_common.cc
+)
+
+target_link_libraries(rknn_yolov8_with_deepsort
+  ${RKNN_RT_LIB}
+  ${RGA_LIB}
+  ${OpenCV_LIBS}
+  deepsort
+)
+
+# main_dual_camera (双摄像头版本)
+add_executable(rknn_yolov8_dual_camera
+  src/main_dual_camera.cc
+  src/postprocess.cc
+  src/rk_common.cc
+)
+
+target_link_libraries(rknn_yolov8_dual_camera
+  ${RKNN_RT_LIB}
+  ${RGA_LIB}
+  ${OpenCV_LIBS}
+  deepsort
+)
+
+# test_camera (简单摄像头测试)
+add_executable(test_camera
+  src/test_camera.cc
+)
+
+target_link_libraries(test_camera
+  ${OpenCV_LIBS}
+)
+
 # 简单 HTTP 上报测试程序（不涉及 NPU / RTSP），用于验证 libcurl 自身是否会卡死
 find_package(CURL QUIET)
 if(CURL_FOUND)
