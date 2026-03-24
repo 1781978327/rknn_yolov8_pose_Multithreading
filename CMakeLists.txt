@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.4.1)
 
 project(rknn_yolov8_demo)
 
+# Add DeepSORT subdirectory
+add_subdirectory(deepsort)
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "-pthread")
@@ -50,6 +53,20 @@ set(RGA_LIB ${RGA_PATH}/lib/Linux/${LIB_ARCH}/librga.so)
 include_directories( ${RGA_PATH}/include)
 set(CMAKE_INSTALL_RPATH "lib")
 
+# Eigen3 (required by DeepSORT)
+if(NOT EIGEN3_INCLUDE_DIR)
+  find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3 /usr/local/include NO_DEFAULT_PATH)
+endif()
+if(NOT EIGEN3_INCLUDE_DIR)
+  find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core)
+endif()
+if(EIGEN3_INCLUDE_DIR)
+  include_directories(${EIGEN3_INCLUDE_DIR})
+  message(STATUS "Found Eigen3: ${EIGEN3_INCLUDE_DIR}")
+else()
+  message(WARNING "Eigen3 not found, DeepSORT may not compile. Install: sudo apt install libeigen3-dev")
+endif()
+
 # 可选：自编译带 rkmpp 的 FFmpeg，用于 YOLO 识别后 RTSP 硬件推流
 # 用法: cmake -DFFMPEG_RKMPP_ROOT=/path/to/ffmpeg-rockchip/install ..
 if(FFMPEG_RKMPP_ROOT)
@@ -79,6 +96,7 @@ endif()
 
 # rknn_yolov8_demo
 include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/deepsort/include)
 
 add_executable(rknn_yolov8_demo
   src/main.cc
@@ -93,6 +111,32 @@ target_link_libraries(rknn_yolov8_demo
   ${RGA_LIB}
   ${OpenCV_LIBS}
   ${RTSP_MPP_LIBS}
+)
+
+# rknn_yolov8_pose_track (YOLOv8 Pose + DeepSORT)
+add_executable(rknn_yolov8_pose_track
+  src/main_pose_track_simple.cc
+  src/postprocess.cc
+  src/rk_common.cc
+  ${RTSP_MPP_SRCS}
+)
+
+target_link_libraries(rknn_yolov8_pose_track
+  ${RKNN_RT_LIB}
+  ${RGA_LIB}
+  ${OpenCV_LIBS}
+  ${RTSP_MPP_LIBS}
+  deepsort
+)
+
+# test_deepsort (DeepSORT 功能测试程序)
+add_executable(test_deepsort
+  src/test_deepsort.cc
+)
+
+target_link_libraries(test_deepsort
+  ${OpenCV_LIBS}
+  deepsort
 )
 
 # 简单 HTTP 上报测试程序（不涉及 NPU / RTSP），用于验证 libcurl 自身是否会卡死
@@ -131,7 +175,7 @@ endif()
 
 # install target and libraries
 set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install/rknn_yolov8_demo_${CMAKE_SYSTEM_NAME})
-install(TARGETS rknn_yolov8_demo DESTINATION ./)
+install(TARGETS rknn_yolov8_demo rknn_yolov8_pose_track DESTINATION ./)
 install(PROGRAMS ${RKNN_RT_LIB} DESTINATION lib)
 install(PROGRAMS ${RGA_LIB} DESTINATION lib)
 if(OpenCV_INSTALL_LIBS)
